@@ -97,7 +97,7 @@ def output(X, Y, W):
 
 if __name__ == '__main__':
     # 初始化数据
-    n_patient, n_or, instance_id = 20, 3, 11
+    n_patient, n_or, instance_id = 20, 3, 19
     patients = pd.read_csv(f'../data/patients_{n_patient}_{instance_id}.csv', index_col=0)
     hospitals = pd.read_csv(f'../data/hospitals.csv')
 
