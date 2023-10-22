@@ -3,7 +3,7 @@
 # @Author  : wangqianlong
 # @email   ：17634233142@qq.com
 # @FileName: LBBD.py
-
+import random
 import time
 import pandas as pd
 from gurobipy import *
@@ -147,7 +147,43 @@ class Sub_Problem():
             return [None, 'infeasible']
 
 
-def add_benders_cut(mp, sps, iter):
+def add_benders_cut_multi(mp, sps, iter):
+    add_cut_num = 0
+    lbbd = 1
+    for sub_id in sps.keys():
+        if sps[sub_id]:
+            if sps[sub_id]['solution'][0] is None:
+                bhd_sub_id = list(hospitals[(hospitals['Hos'] == sub_id[0]) & (hospitals['d'] == sub_id[1])]['Bhd'])[0]
+                for hd_id, hd in hospitals.iterrows():
+                    if list(hd)[4] <= bhd_sub_id:
+                        hos, d = list(hd)[0], list(hd)[1]
+                        if lbbd == 1:
+                            mp.model.addConstr(quicksum((1 - mp.X[hos, d, p]) for p in sps[sub_id]['model'].patients) >= 1,
+                                               name=f'feasibility_cut_{iter}_{sub_id[0]}_{sub_id[1]}_{hos}_{d}')
+                        elif lbbd == 2:
+                            mp.model.addConstr(mp.Y[hos, d] + quicksum((1 - mp.X[hos, d, p]) for p in sps[sub_id]['model'].patients)
+                                               >= len(Sets['R']) + 1,
+                                               name=f'feasibility_cut_{iter}_{sub_id[0]}_{sub_id[1]}_{hos}_{d}')
+                        elif lbbd == 3:
+                            mp.model.addConstr(mp.Y[hos, d] + quicksum(
+                                (1 - mp.X[hos, d, p]) for p in sps[sub_id]['model'].patients)
+                                               >= sps[sub_id]['model'].Y_MPS + 1,
+                                               name=f'feasibility_cut_{iter}_{sub_id[0]}_{sub_id[1]}_{hos}_{d}')
+                        add_cut_num += 1
+            else:
+                if sps[sub_id]['solution'][0] != mp.MPS[sub_id]['Y']:
+                    bhd_sub_id = list(hospitals[(hospitals['Hos'] == sub_id[0]) & (hospitals['d'] == sub_id[1])]['Bhd'])[0]
+                    for hd_id, hd in hospitals.iterrows():
+                        if list(hd)[4] <= bhd_sub_id:
+                            hos, d = list(hd)[0], list(hd)[1]
+                            mp.model.addConstr(mp.Y[hos, d] + quicksum(1 - mp.X[hos, d, p] for p in sps[sub_id]['model'].patients)
+                                               >= sps[sub_id]['solution'][0],
+                                               name=f'optimality_cut_{iter}_{sub_id[0]}_{sub_id[1]}_{hos}_{d}')
+                            add_cut_num += 1
+    return add_cut_num
+
+
+def add_benders_cut_one(mp, sps, iter):
     add_cut_num = 0
     lbbd = 2
     for sub_id in sps.keys():
@@ -188,12 +224,17 @@ def LBBD(MP, max_iter):
                 sub_problems[sub_id]['model'] = Sub_Problem(sub_id, sub_yp)
                 sub_problems[sub_id]['solution'] = sub_problems[sub_id]['model'].optimize_return()
         SPSS.append(sub_problems)
-        add_cut_num = add_benders_cut(MP, sub_problems, iter)
+        p = random.choice([0, 1])
+        # if random.random() <= 0.5:
+        if p:
+            add_cut_num = add_benders_cut_one(MP, sub_problems, iter)
+        else:
+            add_cut_num = add_benders_cut_multi(MP, sub_problems, iter)
         add_cut_num_all += add_cut_num
         print(f'------------------------ iter: {iter}, add_cut_num: {add_cut_num} --------------------------')
         if add_cut_num == 0:
             print('-------------------------------- optimal -----------------------------------')
-            print(f'--------------------------- add_cut_num_all: {add_cut_num_all} ---------------------------')
+            print(f'--------------------------- add_cut_num_all: {add_cut_num_all} ----------------------------')
             break
         MPS = MP.optimize_return()
         MPSS.append(MPS)
@@ -201,31 +242,31 @@ def LBBD(MP, max_iter):
     return MPSS, SPSS
 
 
-# 初始化数据
-n_patient, n_or, instance_id = 20, 3, 19
-patients = pd.read_csv(f'../data/patients_{n_patient}_{instance_id}.csv', index_col=0)
-hospitals = pd.read_csv(f'../data/hospitals.csv')
+if __name__ == '__main__':
+    # 设置随机种子 ： 5000--4.56s, 最快3.47s(未保存种子...，multi-cut：LBBD = 3)，multi-cut ： lbbd == 1， one-cut -- lbbd == 2
+    # R_S = random.randint(0, 10000)
+    R_S = 5000
+    print(f'random seed is {R_S}')
+    random.seed(R_S)
+    # 初始化数据
+    # n_patient, n_or, instance_id = 40, 5, 18  # seed 5000
+    n_patient, n_or, instance_id = 40, 5, 18  # seed 6202
+    patients = pd.read_csv(f'../data/patients_{n_patient}_{instance_id}.csv', index_col=0)
+    hospitals = pd.read_csv(f'../data/hospitals.csv')
 
-Sets = {
-    'P': list(patients.index),
-    'P_prime': list(patients[patients['Type'] == 1].index),
-    'H': [h for h in range(parameters['hospital'])],
-    'D': [d for d in range(parameters['day'])],
-    'R': [r for r in range(n_or)],
-}
+    Sets = {
+        'P': list(patients.index),
+        'P_prime': list(patients[patients['Type'] == 1].index),
+        'H': [h for h in range(parameters['hospital'])],
+        'D': [d for d in range(parameters['day'])],
+        'R': [r for r in range(n_or)],
+    }
 
-Sets['P/P_prime'] = list(set(Sets['P']).difference(set(Sets['P_prime'])))
+    Sets['P/P_prime'] = list(set(Sets['P']).difference(set(Sets['P_prime'])))
 
-MP = Master_Problem()
-t_1 = time.time()
-MPSS, SPSS = LBBD(MP, 1600)
-t_2 = time.time()
-print(f'LBBD: optimal objective: {MP.objective.getValue()}')
-print(f'LBBD time: {t_2 - t_1}')
-
-# for p in Sets['P']:
-#     MP.model.addConstr(MP.X[0, 0, p] == 1, name=f'patient_{p}')
-#
-# MPS = MP.optimize_return()
-# MP.model.computeIIS()
-# MP.model.write('LBBD_model.ilp')
+    MP = Master_Problem()
+    t_1 = time.time()
+    MPSS, SPSS = LBBD(MP, 1600)
+    t_2 = time.time()
+    print(f'LBBD: optimal objective: {MP.objective.getValue()}')
+    print(f'LBBD time: {t_2 - t_1}')
